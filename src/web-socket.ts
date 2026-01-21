@@ -189,20 +189,25 @@ export class WebSocketServer {
             return true
           }
 
-          // Check for GitHub token authentication in headers (for Electron/native clients)
+          // Check for JWT/GitHub token authentication
+          // Support both headers (for Electron/native clients) and query params (for browser clients)
           const authHeader = info.req.headers?.['authorization']
           const githubTokenHeader = info.req.headers?.['x-github-token']
+          const tokenQueryParam = url.searchParams.get('token') // JWT token from browser clients
+          const githubTokenQueryParam = url.searchParams.get('github_token') // GitHub PAT from query
           
           // Accept connection if either:
           // 1. Has Authorization header with Bearer token
           // 2. Has X-GitHub-Token header
-          // 3. Has key in query params (legacy support for local connections)
+          // 3. Has token query parameter (JWT token from browser)
+          // 4. Has github_token query parameter (GitHub PAT)
+          // 5. Has key in query params (legacy support for local connections)
           const providedKey = url.searchParams.get('key')
           
           const authHeaderStr = Array.isArray(authHeader) ? authHeader[0] : authHeader
           const githubTokenStr = Array.isArray(githubTokenHeader) ? githubTokenHeader[0] : githubTokenHeader
           
-          const hasGitHubAuth = (authHeaderStr && authHeaderStr.startsWith('Bearer ')) || githubTokenStr
+          const hasGitHubAuth = (authHeaderStr && authHeaderStr.startsWith('Bearer ')) || githubTokenStr || tokenQueryParam || githubTokenQueryParam
           const hasKeyAuth = providedKey && this.validateWebSocketKey(providedKey)
           
           if (!hasGitHubAuth && !hasKeyAuth) {
@@ -211,7 +216,15 @@ export class WebSocketServer {
           }
 
           if (hasGitHubAuth) {
-            console.log('✅ WebSocket authenticated via GitHub token')
+            if (tokenQueryParam) {
+              console.log('✅ WebSocket authenticated via JWT token (query param)')
+            }
+            else if (githubTokenQueryParam) {
+              console.log('✅ WebSocket authenticated via GitHub token (query param)')
+            }
+            else {
+              console.log('✅ WebSocket authenticated via token header')
+            }
           }
 
           return true
