@@ -4,6 +4,10 @@ import * as os from 'os'
 import * as path from 'path'
 import * as WebSocket from 'ws'
 
+// Session ticket for WebSocket authentication (generated on startup)
+// This ticket is used by browser clients that cannot send custom headers
+export const SESSION_TICKET = crypto.randomBytes(32).toString('hex')
+
 // Types for WebSocket server configuration
 interface WebSocketVerifyInfo {
   req: {
@@ -175,26 +179,24 @@ export class WebSocketServer {
         host: '0.0.0.0', // Allow connections from pod network in Kubernetes
       verifyClient: (info: WebSocketVerifyInfo) => {
         try {
-          // Validate connection is from localhost
-          // const remoteAddress = info.req.connection.remoteAddress
-          // const isLocalhost = remoteAddress === '127.0.0.1'
-          //   || remoteAddress === '::1'
-          //   || remoteAddress === '::ffff:127.0.0.1'
+          const url = new URL(info.req.url!, `ws://127.0.0.1:${this.WS_PORT}`)
+          
+          // Check for session ticket authentication (primary method for browser/webapp clients)
+          // This ticket is obtained by calling GET /api/auth/ws-ticket with a valid JWT
+          const providedTicket = url.searchParams.get('ticket')
+          if (providedTicket && providedTicket === SESSION_TICKET) {
+            console.log('✅ WebSocket authenticated via session ticket')
+            return true
+          }
 
-          // if (!isLocalhost) {
-          //   
-          //   return false
-          // }
-
-          // Check for GitHub token authentication in headers
+          // Check for GitHub token authentication in headers (for Electron/native clients)
           const authHeader = info.req.headers?.['authorization']
           const githubTokenHeader = info.req.headers?.['x-github-token']
           
           // Accept connection if either:
           // 1. Has Authorization header with Bearer token
           // 2. Has X-GitHub-Token header
-          // 3. Has key in query params (legacy support)
-          const url = new URL(info.req.url!, `ws://127.0.0.1:${this.WS_PORT}`)
+          // 3. Has key in query params (legacy support for local connections)
           const providedKey = url.searchParams.get('key')
           
           const authHeaderStr = Array.isArray(authHeader) ? authHeader[0] : authHeader
@@ -204,12 +206,12 @@ export class WebSocketServer {
           const hasKeyAuth = providedKey && this.validateWebSocketKey(providedKey)
           
           if (!hasGitHubAuth && !hasKeyAuth) {
-            
+            console.warn('⚠️ WebSocket connection rejected: No valid authentication provided')
             return false
           }
 
           if (hasGitHubAuth) {
-            
+            console.log('✅ WebSocket authenticated via GitHub token')
           }
 
           return true

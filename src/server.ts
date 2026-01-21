@@ -13,6 +13,7 @@ import {
 import { encrypt, decrypt, safeObfuscate } from './utils/crypto.js';
 import { getKeyMetadata, decryptWithPrivateKey, encryptWithPublicKey, isKeyPairInitialized, tryDecrypt } from './utils/asymmetric-crypto.js';
 import { verifyBearerToken, extractBearerToken } from './utils/auth.js';
+import { SESSION_TICKET } from './web-socket.js';
 import LocalLLM from './local_llm/local.js';
 import JobManager from './jobs/JobManager.js';
 import SecureExecutor from './secure/SecureExecutor.js';
@@ -117,6 +118,70 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             service: 'codespace-executor',
             version: '1.0.0'
         }));
+    }
+    // WebSocket ticket endpoint - returns session ticket for authenticated users
+    // Browser clients use this to get a ticket for WebSocket authentication
+    // since browsers cannot send custom headers on WebSocket connections
+    else if (pathname === '/api/auth/ws-ticket') {
+        // Handle CORS preflight
+        if (req.method === 'OPTIONS') {
+            res.writeHead(204, {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+                'Access-Control-Max-Age': '86400'
+            });
+            res.end();
+            return;
+        }
+
+        if (req.method === 'GET') {
+            (async (): Promise<void> => {
+                try {
+                    // Set CORS headers for browser access
+                    res.setHeader('Access-Control-Allow-Origin', '*');
+                    res.setHeader('Access-Control-Allow-Headers', 'Authorization');
+
+                    const authHeader = req.headers['authorization'];
+                    const token = extractBearerToken(authHeader);
+
+                    if (!token) {
+                        res.writeHead(401, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({
+                            error: 'Unauthorized',
+                            message: 'Bearer token required'
+                        }));
+                        return;
+                    }
+
+                    const isValid = await verifyBearerToken(token);
+                    if (!isValid) {
+                        res.writeHead(401, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({
+                            error: 'Unauthorized',
+                            message: 'Invalid or expired token'
+                        }));
+                        return;
+                    }
+
+                    // Return the session ticket
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ ticket: SESSION_TICKET }));
+                } catch (error: any) {
+                    console.error('❌ Error in /api/auth/ws-ticket:', error.message);
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                        error: 'Internal Server Error',
+                        message: 'Failed to generate ticket'
+                    }));
+                }
+            })();
+            return;
+        }
+
+        // Method not allowed
+        res.writeHead(405, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Method not allowed' }));
     }
     // Serve index.html at root
     else if (pathname === '/' && req.method === 'GET') {
